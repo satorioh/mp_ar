@@ -1,8 +1,5 @@
 import mediapipe as mp
 import cv2
-import numpy as np
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
 
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -18,16 +15,15 @@ CAMERA_DEVICE = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 
-DEG_0 = 0
-DEG_1 = 0
 ANG_VEL = 2.0  # 角速度
-SHOW_SHIELD_RATIO = 1.1
+SHOW_SHIELD_RATIO = 1.0
 SHIELD_SCALE = 2.0
 
 
 class ShieldModule:
     def __init__(self):
         self.result = None
+        self.deg = 0  # 旋转角度
         self.hand0 = {
             "wrist": None,
             "thumb_tip": None,
@@ -133,17 +129,17 @@ class ShieldModule:
         shield_size = diameter, diameter
         return x1, y1, diameter, shield_size
 
-    def get_rotated_image(self, deg):
-        deg = deg + ANG_VEL
-        if deg > 360:
-            deg = 0
+    def get_rotated_image(self):
+        self.deg += ANG_VEL
+        if self.deg > 360:
+            self.deg = 0
         hei, wid, col = SHIELD_1.shape  # SHIELD_1和SHIELD_2尺寸相同
         cen = (wid // 2, hei // 2)
-        M1 = cv2.getRotationMatrix2D(cen, round(deg), 1.0)
-        M2 = cv2.getRotationMatrix2D(cen, round(360 - deg), 1.0)
+        M1 = cv2.getRotationMatrix2D(cen, round(self.deg), 1.0)
+        M2 = cv2.getRotationMatrix2D(cen, round(360 - self.deg), 1.0)
         rotated1 = cv2.warpAffine(SHIELD_1, M1, (wid, hei))
         rotated2 = cv2.warpAffine(SHIELD_2, M2, (wid, hei))
-        return rotated1, rotated2, deg
+        return rotated1, rotated2
 
     def transparent(self, shield_img, x, y, image, size=None):
         if size is not None:
@@ -163,7 +159,6 @@ class ShieldModule:
         return original_image
 
     def loop_hands_landmark(self, image):
-        global DEG_0
         h, w, c = image.shape
         for index, hand_landmark in enumerate(self.result.hand_landmarks):
             hand = self.hand0 if index == 0 else self.hand1
@@ -185,8 +180,7 @@ class ShieldModule:
                 self.draw_hand_lines(image, hand)
             if ratio and ratio > SHOW_SHIELD_RATIO:
                 x1, y1, diameter, shield_size = self.calc_shield_position(image, hand, hand_close)
-                rotated1, rotated2, deg = self.get_rotated_image(DEG_0)
-                DEG_0 = deg
+                rotated1, rotated2 = self.get_rotated_image()
                 if diameter != 0:
                     image = self.transparent(rotated1, x1, y1, image, shield_size)
                     image = self.transparent(rotated2, x1, y1, image, shield_size)
