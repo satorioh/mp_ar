@@ -11,21 +11,43 @@ HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
 MODEL_PATH = "../model/hand_landmarker.task"
-SHIELD_1 = cv2.imread('magic_circles/magic_circle_ccw.png', -1)
-SHIELD_2 = cv2.imread('magic_circles/magic_circle_cw.png', -1)
-DEG = 0
+SHIELD_1 = cv2.imread('../asserts/magic_circle_ccw.png', -1)
+SHIELD_2 = cv2.imread('../asserts/magic_circle_cw.png', -1)
+
 CAMERA_DEVICE = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
-MARGIN = 10  # pixels
-FONT_SIZE = 1
-FONT_THICKNESS = 1
-HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
+
+DEG_0 = 0
+DEG_1 = 0
+ANG_VEL = 2.0  # 角速度
+SHOW_SHIELD_RATIO = 1.1
+SHIELD_SCALE = 2.0
 
 
 class ShieldModule:
     def __init__(self):
         self.result = None
+        self.hand0 = {
+            "wrist": None,
+            "thumb_tip": None,
+            "index_mcp": None,
+            "index_tip": None,
+            "midle_mcp": None,
+            "midle_tip": None,
+            "ring_tip": None,
+            "pinky_tip": None
+        }
+        self.hand1 = {
+            "wrist": None,
+            "thumb_tip": None,
+            "index_mcp": None,
+            "index_tip": None,
+            "midle_mcp": None,
+            "midle_tip": None,
+            "ring_tip": None,
+            "pinky_tip": None
+        }
 
     def init_detector(self):
         base_options = BaseOptions(model_asset_path=MODEL_PATH, delegate=BaseOptions.Delegate.GPU)
@@ -36,80 +58,139 @@ class ShieldModule:
 
     def init_camera(self):
         cap = cv2.VideoCapture(CAMERA_DEVICE)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        # cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         return cap
 
     def print_result(self, result: HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
         self.result = result
 
-    def draw_landmarks_on_image(self, rgb_image, detection_result):
-        hand_landmarks_list = detection_result.hand_landmarks
-        handedness_list = detection_result.handedness
-        annotated_image = np.copy(rgb_image)
-
-        # Loop through the detected hands to visualize.
-        hand_landmarks_list_len = len(hand_landmarks_list)
-        for idx in range(hand_landmarks_list_len):
-            hand_landmarks = hand_landmarks_list[idx]
-            handedness = handedness_list[idx]
-
-            # Draw the hand landmarks.
-            hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-            hand_landmarks_proto.landmark.extend([
-                landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
-            ])
-            solutions.drawing_utils.draw_landmarks(
-                annotated_image,
-                hand_landmarks_proto,
-                solutions.hands.HAND_CONNECTIONS,
-                solutions.drawing_styles.get_default_hand_landmarks_style(),
-                solutions.drawing_styles.get_default_hand_connections_style())
-
-            # Get the top left corner of the detected hand's bounding box.
-            height, width, _ = annotated_image.shape
-            x_coordinates = [landmark.x for landmark in hand_landmarks]
-            y_coordinates = [landmark.y for landmark in hand_landmarks]
-            text_x = int(min(x_coordinates) * width)
-            text_y = int(min(y_coordinates) * height) - MARGIN
-
-            # Draw handedness (left or right hand) on the image.
-            cv2.putText(annotated_image, f"{handedness[0].category_name}",
-                        (text_x, text_y), cv2.FONT_HERSHEY_DUPLEX,
-                        FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv2.LINE_AA)
-
-        return annotated_image
-
     def draw_line(self, img, p1, p2, size=5):
         cv2.line(img, p1, p2, (50, 50, 255), size)
         cv2.line(img, p1, p2, (255, 255, 255), round(size / 2))
 
-    def position_data(self, lmlist):
-        global wrist, thumb_tip, index_mcp, index_tip, midle_mcp, midle_tip, ring_tip, pinky_tip
-        wrist = (lmlist[0][0], lmlist[0][1])
-        thumb_tip = (lmlist[4][0], lmlist[4][1])
-        index_mcp = (lmlist[5][0], lmlist[5][1])
-        index_tip = (lmlist[8][0], lmlist[8][1])
-        midle_mcp = (lmlist[9][0], lmlist[9][1])
-        midle_tip = (lmlist[12][0], lmlist[12][1])
-        ring_tip = (lmlist[16][0], lmlist[16][1])
-        pinky_tip = (lmlist[20][0], lmlist[20][1])
+    def set_position_data(self, lmlist, hand):
+        hand["wrist"] = (lmlist[0][0], lmlist[0][1])
+        hand["thumb_tip"] = (lmlist[4][0], lmlist[4][1])
+        hand["index_mcp"] = (lmlist[5][0], lmlist[5][1])
+        hand["index_tip"] = (lmlist[8][0], lmlist[8][1])
+        hand["midle_mcp"] = (lmlist[9][0], lmlist[9][1])
+        hand["midle_tip"] = (lmlist[12][0], lmlist[12][1])
+        hand["ring_tip"] = (lmlist[16][0], lmlist[16][1])
+        hand["pinky_tip"] = (lmlist[20][0], lmlist[20][1])
 
-    def calculate_distance(self, p1, p2):
+    def calc_distance(self, p1, p2):
         x1, y1, x2, y2 = p1[0], p1[1], p2[0], p2[1]
         return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** (1.0 / 2)
 
-    def calculate_ratio(self, img_w, img_h):
-        for hand in self.result.hand_landmarks:
+    def calc_ratio(self, hand):
+        wrist = hand["wrist"]
+        index_mcp = hand["index_mcp"]
+        index_tip = hand["index_tip"]
+        pinky_tip = hand["pinky_tip"]
+        thumb_tip = hand["thumb_tip"]
+        hand_close = self.calc_distance(wrist, index_mcp)
+        hand_open = self.calc_distance(index_tip, pinky_tip)
+        # hand_open = self.calc_distance(thumb_tip, pinky_tip)
+        return hand_open / hand_close, hand_close, hand_open
+
+    def draw_hand_lines(self, image, hand):
+        wrist = hand["wrist"]
+        thumb_tip = hand["thumb_tip"]
+        index_tip = hand["index_tip"]
+        midle_tip = hand["midle_tip"]
+        ring_tip = hand["ring_tip"]
+        pinky_tip = hand["pinky_tip"]
+        self.draw_line(image, wrist, thumb_tip)
+        self.draw_line(image, wrist, index_tip)
+        self.draw_line(image, wrist, midle_tip)
+        self.draw_line(image, wrist, ring_tip)
+        self.draw_line(image, wrist, pinky_tip)
+        self.draw_line(image, thumb_tip, index_tip)
+        self.draw_line(image, thumb_tip, midle_tip)
+        self.draw_line(image, thumb_tip, ring_tip)
+        self.draw_line(image, thumb_tip, pinky_tip)
+
+    def calc_shield_position(self, image, hand, hand_close):
+        midle_mcp = hand["midle_mcp"]
+        center_x, center_y = midle_mcp
+        diameter = round(hand_close * SHIELD_SCALE)
+        x1 = round(center_x - (diameter / 2))  # shield left
+        y1 = round(center_y - (diameter / 2))  # shield top
+        h, w, c = image.shape
+        if x1 < 0:
+            x1 = 0
+        elif x1 > w:
+            x1 = w
+        if y1 < 0:
+            y1 = 0
+        elif y1 > h:
+            y1 = h
+        if x1 + diameter > w:
+            diameter = w - x1
+        if y1 + diameter > h:
+            diameter = h - y1
+        shield_size = diameter, diameter
+        return x1, y1, diameter, shield_size
+
+    def get_rotated_image(self, deg):
+        deg = deg + ANG_VEL
+        if deg > 360:
+            deg = 0
+        hei, wid, col = SHIELD_1.shape  # SHIELD_1和SHIELD_2尺寸相同
+        cen = (wid // 2, hei // 2)
+        M1 = cv2.getRotationMatrix2D(cen, round(deg), 1.0)
+        M2 = cv2.getRotationMatrix2D(cen, round(360 - deg), 1.0)
+        rotated1 = cv2.warpAffine(SHIELD_1, M1, (wid, hei))
+        rotated2 = cv2.warpAffine(SHIELD_2, M2, (wid, hei))
+        return rotated1, rotated2, deg
+
+    def transparent(self, shield_img, x, y, image, size=None):
+        if size is not None:
+            shield_img = cv2.resize(shield_img, size)
+
+        original_image = image.copy()
+        b, g, r, a = cv2.split(shield_img)
+        overlay_color = cv2.merge((b, g, r))
+        mask = cv2.medianBlur(a, 1)
+        h, w, _ = overlay_color.shape
+        roi = original_image[y:y + h, x:x + w]
+
+        img1_bg = cv2.bitwise_and(roi.copy(), roi.copy(), mask=cv2.bitwise_not(mask))
+        img2_fg = cv2.bitwise_and(overlay_color, overlay_color, mask=mask)
+        original_image[y:y + h, x:x + w] = cv2.add(img1_bg, img2_fg)
+
+        return original_image
+
+    def loop_hands_landmark(self, image):
+        global DEG_0
+        h, w, c = image.shape
+        for index, hand_landmark in enumerate(self.result.hand_landmarks):
+            hand = self.hand0 if index == 0 else self.hand1
+            # rotate_deg = DEG_0 if index == 0 else DEG_1
+
+            # set hand landmarks data
             lm_list = []
-            for idx, lm in enumerate(hand):
-                coor_x, coor_y = int(lm.x * img_w), int(lm.y * img_h)
+            for idx, lm in enumerate(hand_landmark):
+                coor_x, coor_y = int(lm.x * w), int(lm.y * h)
                 lm_list.append([coor_x, coor_y])
-            self.position_data(lm_list)
-            palm = self.calculate_distance(wrist, index_mcp)
-            distance = self.calculate_distance(index_tip, pinky_tip)
-            ratio = distance / palm
-            return ratio
+            self.set_position_data(lm_list, hand)
+
+            # calculate distance and ratio
+            ratio, hand_close, hand_open = self.calc_ratio(hand)
+            print(ratio)
+
+            # draw hand lines or show shield
+            if ratio and (0.5 < ratio < SHOW_SHIELD_RATIO):
+                self.draw_hand_lines(image, hand)
+            if ratio and ratio > SHOW_SHIELD_RATIO:
+                x1, y1, diameter, shield_size = self.calc_shield_position(image, hand, hand_close)
+                rotated1, rotated2, deg = self.get_rotated_image(DEG_0)
+                DEG_0 = deg
+                if diameter != 0:
+                    image = self.transparent(rotated1, x1, y1, image, shield_size)
+                    image = self.transparent(rotated2, x1, y1, image, shield_size)
+        return image
 
     def main(self):
         cap = self.init_camera()
@@ -129,22 +210,8 @@ class ShieldModule:
             detector.detect_async(image_for_detect, timestamp)
 
             if self.result is not None:
-                h, w, c = image.shape
-                ratio = self.calculate_ratio(w, h)
-                print(ratio)
-                if ratio and (0.5 < ratio < 1.5):
-                    self.draw_line(image, wrist, thumb_tip)
-                    self.draw_line(image, wrist, index_tip)
-                    self.draw_line(image, wrist, midle_tip)
-                    self.draw_line(image, wrist, ring_tip)
-                    self.draw_line(image, wrist, pinky_tip)
-                    self.draw_line(image, thumb_tip, index_tip)
-                    self.draw_line(image, thumb_tip, midle_tip)
-                    self.draw_line(image, thumb_tip, ring_tip)
-                    self.draw_line(image, thumb_tip, pinky_tip)
-                cv2.imshow('show frame', image)
-            else:
-                cv2.imshow('show frame', image)
+                shield_image = self.loop_hands_landmark(image)
+                cv2.imshow('show shield', shield_image)
 
             if cv2.waitKey(5) & 0xFF == 27:
                 print("Closing Camera Stream")
